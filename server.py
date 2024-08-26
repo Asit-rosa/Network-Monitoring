@@ -1,118 +1,62 @@
-import socket
+import asyncio
 import socketio
 import eventlet
-import threading
 
-sio = socketio.Server(cors_allowed_origins='*')
+sio = socketio.Server(async_mode='eventlet', ping_timeout=60)
+
 app = socketio.WSGIApp(sio)
 
-# Variables to track network traffic
-server_bytes_received = 0
+@sio.on('Event Motor')
+def handle_event_motor(sid, data):
+    print('[INFO(Control Server) -> Event Motor | Data -> {}'.format(data))
 
-def get_ip():
-    try:
-        hostname = socket.gethostname()
-        ip_address = socket.gethostbyname(hostname)
-        return ip_address
-    except Exception as e:
-        print("Error:", e)
-        return None
+@sio.on('Event Actuator')
+def handle_event_actuator(sid, data):
+    print('[INFO(Control Server) -> Event Actuator | Data -> {}'.format(data))
+
+@sio.on('Event Power')
+def handle_event_power(sid, data):
+    print('[INFO(Control Server) -> Event Power | Data -> {}'.format(data))
+
+@sio.on('Event General')
+def handle_event_general(sid, data):
+    print('[INFO(Control Server) -> Event General | Page ID: Control] : Data -> {}'.format(data))
+
+@sio.on('Latency')
+def handle_latency(sid, data):
+    print(f'[INFO(Control Server) -> Latency] : {data}')
+    sio.emit('Latency', data)
+
+@sio.on('Response Time')
+def handle_response_time(sid, data):
+    print(f'[INFO(Control Server) -> Response Time] : {data}')
+    sio.emit('Response Time', data)
 
 @sio.event
-def connect(sid, environ):
-    print('Client connected', sid)
+def connect(sid, environ, auth):
+    print("[INFO(Control Server) -> Connect] : SID -> {}".format(sid))
+
+
+@sio.event
+def connect_error(sid, environ):
+    print('[INFO(Control Server) -> Connection Error] : SID -> {} | Data -> {}'.format(sid, environ))
+
 
 @sio.event
 def disconnect(sid):
-    print('Client disconnected', sid)
+    print("[INFO(Control Server) -> Dis-Connect] : SID -> {}".format(sid))
 
-@sio.on('latency')
-def get_latency(sid, data):
-    print('latency', data)
-    sio.emit('latency', data)
 
-@sio.on('response_time')
-def get_response_time(sid, data):
-    print('response_time', data)
-    sio.emit('response_time', data)
+async def control(ip_System, portServer):
+    try:
+        await eventlet.wsgi.server(eventlet.listen((ip_System, portServer)), app)
+    except Exception as e:
+        print('[INFO -> Control Server Error | Page ID: Control] :  Error -> {}'.format(e))
 
-@sio.on('packet_loss')
-def get_packet_loss(sid, data):
-    print('packet_loss', data)
-    sio.emit('packet_loss', data)
 
-@sio.on('bandwidth')
-def get_bandwidth(sid, data):
-    print('bandwidth', data)
-    sio.emit('bandwidth', data)
+def main(ip_system, portServer):
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(control(ip_system, portServer))
 
-@sio.on('client_bytes_sent')
-def get_client_bytes_sent(sid, data):
-    global server_bytes_received
-    print(f"client_bytes_sent {data}")
-    sio.emit('client_bytes_sent', data)
-    print(f"server_bytes_received {server_bytes_received}")
-    sio.emit('server_bytes_received', server_bytes_received)
 
-def receive_data_for_bandwidth(bind_ip, bind_port):
-    global server_bytes_received
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((bind_ip, bind_port))
-        s.listen()
-        while True:
-            conn, addr = s.accept()
-            with conn:
-                print(f'Connected by {addr}')
-                try:
-                    while True:
-                        data = conn.recv(1024)
-                        if not data:
-                            break
-                        server_bytes_received += len(data)
-                except ConnectionResetError as e:
-                    print(f"Connection was reset by the client: {e}")
-                except Exception as e:
-                    print(f"An error occurred: {e}")
-
-def receive_data_for_packetloss(bind_ip, bind_port, expected_packets):
-    received_packets = 0
-    lost_packets = 0
-
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind((bind_ip, bind_port))
-        while received_packets < expected_packets:
-            data, _ = s.recvfrom(1024)
-            if data:
-                received_packets += 1
-            else:
-                lost_packets += 1
-
-    packet_loss_percentage = (lost_packets / expected_packets) * 100
-    print(f"Packet Loss Percentage: {packet_loss_percentage}%")
-    return packet_loss_percentage
-
-@sio.on('client_bytes_sent')
-def get_client_bytes_sent(sid, data):
-    global server_bytes_received
-    print(f"client_bytes_sent {data}")
-    sio.emit('client_bytes_sent', data)
-    print(f"server_bytes_received {server_bytes_received}")
-    sio.emit('server_bytes_received', server_bytes_received)
-
-if __name__ == '__main__':
-    bind_ip = '192.168.68.114'
-    bind_port_packetloss = 5001  # Ensure this port matches the client configuration
-    bind_port_bandwidth = 5002
-    expected_packets = 100  # Number of packets expected to receive
-
-    # Start the socketio server
-    wsgi_thread = threading.Thread(target=eventlet.wsgi.server, args=(eventlet.listen((get_ip(), 5000)), app))
-    wsgi_thread.start()
-
-    # Start the TCP server for receiving data
-    tcp_server_thread = threading.Thread(target=receive_data_for_bandwidth, args=(bind_ip, bind_port_bandwidth))
-    tcp_server_thread.start()
-
-    # Start the UDP server for packet loss
-    udp_server_thread = threading.Thread(target=receive_data_for_packetloss, args=(bind_ip, bind_port_packetloss, expected_packets))
-    udp_server_thread.start()
+main('192.168.68.136', 8585)
